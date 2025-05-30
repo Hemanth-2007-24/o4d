@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Drive Publisher - Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+             <h1>Publisher Dashboard</h1>
+             <button onclick="logout()" class="button-logout small">Logout</button>
+        </div>
+        <p id="welcomeMessage">Welcome!</p>
+
+
+        <div id="dashboardContent">
+            <div class="site-section">
+                <h2>Your Published Sites</h2>
+                <ul id="sitesList">
+                    <li>Loading sites...</li>
+                </ul>
+            </div>
+
+            <div class="site-section">
+                <h2>Publish New Site</h2>
+                <div>
+                    <label for="folderSelect">Select Google Drive Folder:</label>
+                    <select id="folderSelect" disabled>
+                        <option value="">Login to see folders</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="siteNameInput">Desired Site Name (e.g., my-portfolio):</label>
+                    <input type="text" id="siteNameInput" placeholder="my-cool-project" disabled>
+                    <small>This will be part of the URL: <code>sitename.o4dhome.odoo.com</code> (on production) or <code>/site/sitename</code> (locally)</small>
+                </div>
+                <button id="publishButton" class="button publish" onclick="publishSite()" disabled>Publish Site</button>
+                <div id="statusMessage" class="status-message"></div>
+            </div>
+        </div>
+         <a href="/" class="button-link">← Back to Home</a>
+    </div>
+
+    <script>
+        const userNameSpan = document.getElementById('welcomeMessage');
+        const folderSelect = document.getElementById('folderSelect');
+        const siteNameInput = document.getElementById('siteNameInput');
+        const publishButton = document.getElementById('publishButton');
+        const statusMessageDiv = document.getElementById('statusMessage');
+        const sitesListUl = document.getElementById('sitesList');
+        let currentUser = null;
+
+        async function initializeDashboard() 
+        {
+            try {
+                const response = await fetch('/api/me');
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        window.location.href = '/?auth_required=true'; // Redirect to login if not authenticated
+                    } else {
+                         throw new Error('Failed to fetch user data');
+                    }
+                    return;
+                }
+                currentUser = await response.json();
+                userNameSpan.textContent = \`Welcome, \${currentUser.displayName}!\`;
+                folderSelect.disabled = false;
+                siteNameInput.disabled = false;
+                publishButton.disabled = false;
+
+                await fetchDriveFolders();
+                await fetchUserSites();
+
+            } catch (error) {
+                console.error('Dashboard init error:', error);
+                statusMessageDiv.textContent = 'Error loading dashboard. Please try logging in again.';
+                statusMessageDiv.className = 'status-message status-error';
+            }
+        }
+
+        async function fetchDriveFolders() {
+            if (!currentUser) return;
+            folderSelect.innerHTML = '<option value="">Loading folders...</option>';
+            try {
+                const response = await fetch('/api/drive/folders');
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    if (errorData.action === 're-authenticate') {
+                         showStatus('Authentication issue with Google Drive. You might need to re-login and grant permissions again.', 'error');
+                         // Optionally, trigger a re-auth flow or guide the user.
+                    } else {
+                        throw new Error(errorData.message || 'Failed to load folders');
+                    }
+                    folderSelect.innerHTML = '<option value="">Error loading folders.</option>';
+                    return;
+                }
+                const foldersFromAPI = await response.json();
+                if (foldersFromAPI.length === 0) {
+                    folderSelect.innerHTML = '<option value="">No suitable folders found (ensure you own them and they can be shared).</option>';
+                } else {
+                    folderSelect.innerHTML = foldersFromAPI.map(folder =>
+                        \`<option value="\${folder.id}" data-name="\${folder.name}">\${folder.name}</option>\`
+                    ).join('');
+                    folderSelect.innerHTML = '<option value="">-- Select a Folder --</option>' + folderSelect.innerHTML;
+                }
+            } catch (error) {
+                console.error('Error fetching folders:', error);
+                folderSelect.innerHTML = '<option value="">Error loading folders.</option>';
+                showStatus(\`Error loading folders: \${error.message}\`, 'error');
+            }
+        }
+
+        async function fetchUserSites() {
+             if (!currentUser) return;
+             sitesListUl.innerHTML = '<li>Loading your sites...</li>';
+             try {
+                const response = await fetch('/api/sites');
+                if (!response.ok) throw new Error('Failed to load sites');
+                const userSites = await response.json();
+
+                if (userSites.length === 0) {
+                    sitesListUl.innerHTML = '<li>No sites published yet.</li>';
+                } else {
+                    sitesListUl.innerHTML = userSites.map(site => \`
+                        <li>
+                            <a href="\${site.siteUrl}" target="_blank">\${site.siteName}</a>
+                            <span class="site-info">(from GDrive: \${site.driveFolderName})</span>
+                            <!-- Add delete button later -->
+                        </li>
+                    \`).join('');
+                }
+             } catch (error) {
+                console.error('Error fetching sites:', error);
+                sitesListUl.innerHTML = '<li>Error loading sites.</li>';
+                showStatus(\`Error loading sites: \${error.message}\`, 'error');
+             }
+        }
+
+
+        async function publishSite() {
+            const selectedOption = folderSelect.options[folderSelect.selectedIndex];
+            if (!selectedOption || !selectedOption.value) {
+                showStatus('Please select a folder.', 'error');
+                return;
+            }
+            const folderId = selectedOption.value;
+            const folderName = selectedOption.dataset.name;
+            const siteName = siteNameInput.value.trim();
+
+            if (!siteName) {
+                showStatus('Please enter a site name.', 'error');
+                return;
+            }
+            if (!/^[a-zA-Z0-9-]+$/.test(siteName)) {
+                showStatus('Site name can only contain letters, numbers, and hyphens.', 'error');
+                return;
+            }
+
+            showStatus(\`Publishing "\${siteName}"...\`, 'info');
+            publishButton.disabled = true;
+
+            try {
+                const response = await fetch('/api/sites/publish', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ folderId, folderName, siteName })
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.message || \`HTTP error! status: \${response.status}\`);
+                }
+
+                showStatus(\`Site "\${siteName}" published! <a href="\${result.siteUrl}" target="_blank">View Site</a>\`, 'success');
+                siteNameInput.value = '';
+                await fetchUserSites(); // Refresh the list of sites
+            } catch (error) {
+                console.error('Error publishing site:', error);
+                showStatus(\`Error: \${error.message}\`, 'error');
+            } finally {
+                publishButton.disabled = false;
+            }
+        }
+
+        function showStatus(message, type = 'info') {
+            statusMessageDiv.innerHTML = message;
+            statusMessageDiv.className = 'status-message'; // Clear existing type classes
+            if (type) {
+                statusMessageDiv.classList.add(\`status-\${type}\`);
+            }
+            // Auto-clear message after some time, unless it's an error
+            if (type !== 'error') {
+                setTimeout(() => {
+                    if (statusMessageDiv.innerHTML === message) { // Only clear if message hasn't changed
+                        statusMessageDiv.textContent = '';
+                        statusMessageDiv.className = 'status-message';
+                    }
+                }, 7000);
+            }
+        }
+        async function logout() {
+            await fetch('/auth/logout');
+            window.location.href = '/';
+        }
+
+        document.addEventListener('DOMContentLoaded', initializeDashboard);
+    </script>
+</body>
+</html>

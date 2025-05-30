@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Welcome - My Drive Publisher</title>
+    <link rel="stylesheet" href="style.css"> <!-- We'll create this -->
+</head>
+<body>
+    <div class="container">
+        <h1>Publish Websites from Google Drive</h1>
+        <p>Easily host static websites directly from your Google Drive folders.</p>
+        <div id="authStatus">
+            <p>Loading user status...</p>
+        </div>
+    </div>
+    <script>
+        async function checkUserStatus() {
+            const authStatusDiv = document.getElementById('authStatus');
+            try {
+                const response = await fetch('/api/me');
+                if (response.ok) {
+                    const user = await response.json();
+                    authStatusDiv.innerHTML = \`
+                        <p>Welcome, \${user.displayName}!</p>
+                        <a href="/dashboard.html" class="button">Go to Dashboard</a>
+                        <button onclick="logout()" class="button-logout">Logout</button>
+                    \`;
+                } else {
+                     authStatusDiv.innerHTML = '<a href="/auth/google" class="button">Login with Google</a>';
+                }
+            } catch (error) {
+                console.error('Error checking user status:', error);
+                authStatusDiv.innerHTML = '<a href="/auth/google" class="button">Login with Google</a>';
+            }
+        }
+        async function logout() {
+            await fetch('/auth/logout');
+            window.location.reload();
+        }
+        checkUserStatus();
+    </script>
+</body>
+</html>
